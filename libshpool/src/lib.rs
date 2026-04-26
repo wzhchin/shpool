@@ -54,7 +54,7 @@ mod user;
 /// NOTE: You must check `version()` and handle it yourself
 /// if it is set. Clap won't do a good job with its
 /// automatic version support for a library.
-#[derive(Parser, Debug, Default)]
+#[derive(Parser, Debug)]
 #[clap(author, about)]
 pub struct Args {
     #[clap(
@@ -100,7 +100,7 @@ the daemon is launched by systemd."
     pub no_daemonize: bool,
 
     #[clap(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 
     // A hidden field rather than using the #[non_exhaustive] attribute
     // allows users to build this struct using the default value plus
@@ -113,17 +113,16 @@ the daemon is launched by systemd."
 }
 
 /// The subcommds that shpool supports.
-#[derive(Subcommand, Debug, Default)]
+#[derive(Subcommand, Debug)]
 #[non_exhaustive]
 pub enum Commands {
     #[clap(about = "Print version")]
-    #[default]
     Version,
 
     #[clap(about = "Starts running a daemon that holds a pool of shells")]
     Daemon,
 
-    #[clap(about = "Creates or attaches to an existing shell session")]
+    #[clap(about = "Creates or attaches to an existing shell session", visible_alias = "a")]
     #[non_exhaustive]
     Attach {
         #[clap(short, long, help = "If a tty is already attached to the session, detach it first")]
@@ -185,14 +184,14 @@ environment.")]
 This detaches the session if it is attached and kills the underlying
 shell with a SIGHUP followed by a SIGKILL if the shell fails to exit
 quickly enough. If no session name is provided $SHPOOL_SESSION_NAME
-will be used if it is present in the environment.")]
+will be used if it is present in the environment.", visible_alias = "k")]
     #[non_exhaustive]
     Kill {
         #[clap(help = "sessions to kill")]
         sessions: Vec<String>,
     },
 
-    #[clap(about = "lists all the running shell sessions")]
+    #[clap(about = "lists all the running shell sessions", visible_alias = "l")]
     #[non_exhaustive]
     List {
         #[clap(short, long, help = "Output as JSON, includes extra fields")]
@@ -211,11 +210,26 @@ needs debugging, but would be clobbered by a restart.")]
     },
 }
 
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            log_file: None,
+            verbose: 0,
+            socket: None,
+            config_file: None,
+            daemonize: false,
+            no_daemonize: false,
+            command: None,
+            __non_exhaustive: (),
+        }
+    }
+}
+
 impl Args {
     /// Version indicates if the wrapping binary must display the
     /// version then exit.
     pub fn version(&self) -> bool {
-        matches!(self.command, Commands::Version)
+        matches!(self.command, Some(Commands::Version))
     }
 }
 
@@ -278,11 +292,11 @@ impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for LogWriterBuilder 
 /// inject the callbacks into the daemon.
 pub fn run(args: Args, hooks: Option<Box<dyn hooks::Hooks + Send + Sync>>) -> anyhow::Result<()> {
     match (&args.command, env::var(consts::SENTINEL_FLAG_VAR).as_deref()) {
-        (Commands::Daemon, Ok("prompt")) => {
+        (Some(Commands::Daemon), Ok("prompt")) => {
             println!("{}", consts::PROMPT_SENTINEL);
             std::process::exit(0);
         }
-        (Commands::Daemon, Ok("startup")) => {
+        (Some(Commands::Daemon), Ok("startup")) => {
             println!("{}", consts::STARTUP_SENTINEL);
             std::process::exit(0);
         }
@@ -305,7 +319,7 @@ pub fn run(args: Args, hooks: Option<Box<dyn hooks::Hooks + Send + Sync>>) -> an
         } else {
             None
         },
-        is_daemon: matches!(args.command, Commands::Daemon),
+        is_daemon: matches!(args.command, Some(Commands::Daemon)),
     };
     tracing_subscriber::registry::Registry::default()
         .with(log_level_layer)
@@ -349,7 +363,7 @@ pub fn run(args: Args, hooks: Option<Box<dyn hooks::Hooks + Send + Sync>>) -> an
 
     if !config_manager.get().nodaemonize.unwrap_or(false) || args.daemonize {
         let arg0 = env::args().next().ok_or(anyhow!("arg0 missing"))?;
-        if !args.no_daemonize && !matches!(args.command, Commands::Daemon) {
+        if !args.no_daemonize && !matches!(args.command, Some(Commands::Daemon)) {
             daemonize::maybe_fork_daemon(&config_manager, &args, arg0, &socket)?;
         }
     }
@@ -365,7 +379,8 @@ pub fn run(args: Args, hooks: Option<Box<dyn hooks::Hooks + Send + Sync>>) -> an
         test_hooks::TEST_HOOK_SERVER.wait_for_connect()?;
     }
 
-    let res: anyhow::Result<()> = match args.command {
+    let command = args.command.unwrap_or(Commands::List { json: false });
+    let res: anyhow::Result<()> = match command {
         Commands::Version => return Err(anyhow!("wrapper binary must handle version")),
         Commands::Daemon => daemon::run(
             config_manager,
