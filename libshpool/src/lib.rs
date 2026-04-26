@@ -164,8 +164,8 @@ pass to the binary using the shell-words crate."
 $HOME by default. Use '.' for pwd."
         )]
         dir: Option<String>,
-        #[clap(help = "The name of the shell session to create or attach to")]
-        name: String,
+        #[clap(help = "The name of the shell session to create or attach to (default: auto-generated)")]
+        name: Option<String>,
     },
 
     #[clap(about = "Make the given session detach from shpool
@@ -390,6 +390,14 @@ pub fn run(args: Args, hooks: Option<Box<dyn hooks::Hooks + Send + Sync>>) -> an
             socket,
         ),
         Commands::Attach { force, background, ttl, cmd, dir, name } => {
+            let name = name.unwrap_or_else(|| {
+                let mut buf = [0u8; 4];
+                std::fs::File::open("/dev/urandom")
+                    .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf))
+                    .ok();
+                let suffix: String = buf.map(|b| (b'a' + (b % 26)) as char).iter().collect();
+                format!("sp-{suffix}")
+            });
             attach::run(config_manager, name, force, background, ttl, cmd, dir, socket)
         }
         Commands::Detach { sessions } => detach::run(sessions, socket),
