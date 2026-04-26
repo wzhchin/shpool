@@ -174,7 +174,7 @@ fn do_attach(
     info!("local env keys: {local_env_keys:?}");
 
     let cwd = String::from(env::current_dir().context("getting cwd")?.to_string_lossy());
-    let default_dir = config.get().default_dir.clone().unwrap_or(String::from("$HOME"));
+    let default_dir = config.get().default_dir.clone().unwrap_or(String::from("."));
     let start_dir = match (default_dir.as_str(), dir.as_deref()) {
         (".", None) => Some(cwd),
         ("$HOME", None) => None,
